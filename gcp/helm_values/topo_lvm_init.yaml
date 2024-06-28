@@ -1,0 +1,16 @@
+config:
+  platform: gcp
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+securityContext:
+  privileged: true
+  capabilities:
+    drop:
+    - NET_RAW
+  readOnlyRootFilesystem: false

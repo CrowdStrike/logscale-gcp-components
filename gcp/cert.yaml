@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    app.kubernetes.io/instance: humiocluster
+    app.kubernetes.io/managed-by: terraform
+    app.kubernetes.io/name: humio
+    humio.com/node-pool: humiocluster-ingest-only
+  name: humiocluster-internal-ingest
+  namespace: logging
+spec:
+  dnsNames:
+  - humiocluster-internal-ingest.logging
+  - humiocluster-internal-ingest-headless.logging
+  issuerRef:
+    name: humiocluster
+  secretName: humiocluster-internal-ingest
