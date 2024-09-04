@@ -1,0 +1,433 @@
+cert-manager:
+  enabled: true
+scheduler:
+  enabled: false
+  type: Deployment
+  service:
+    type: ClusterIP
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - topolvm
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - scheduler
+          topologyKey: kubernetes.io/hostname
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/os
+                operator: In
+                values:
+                  - linux
+
+  topologySpreadConstraints:
+    - maxSkew: 2
+      minDomains: 2
+      whenUnsatisfiable: DoNotSchedule
+      topologyKey: topology.kubernetes.io/zone
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: topolvm
+          app.kubernetes.io/component: scheduler
+      matchLabelKeys:
+        - pod-template-hash
+  priorityClassName: "system-cluster-critical"
+lvmd:
+  managed: false
+  deviceClasses:
+    - name: default
+      volume-group: default
+      default: false
+      spare-gb: 1
+      lvcreate-options:
+        - --type=raid0
+node:
+  lvmdEmbedded: true
+  priorityClassName: system-node-critical
+  initContainers:
+    - name: pvinit
+      securityContext:
+        privileged: true
+      image: ghcr.io/topolvm/topolvm-with-sidecar:0.25
+      command:
+        - nsenter
+      args:
+        - --target
+        - "1"
+        - --mount
+        - --uts
+        - --ipc
+        - --net
+        - /bin/bash
+        - -c
+        - |
+          #!/bin/bash
+          declare -A log_levels=( [FATAL]=0 [ERROR]=3 [WARNING]=4 [INFO]=6 [DEBUG]=7)
+          if ! command -v date &> /dev/null
+          then
+              echo "date could not be found"
+              exit
+          fi
+          if ! command -v jq &> /dev/null
+          then
+              echo "jq could not be found"
+              exit
+          fi
+          json_logger() {
+            log_level=$$1
+            message=$$2
+            level=$${log_levels[$$log_level]}
+            timestamp=$$(date -I'ns')
+            jq --raw-input --compact-output \
+              '{
+                "level": "'$$log_level'",
+                "timestamp": "'$$timestamp'",
+                "message": .
+              }'
+          }
+
+          trap 'catch $$? $$LINENO' ERR
+
+          catch() {
+            echo "Error $$1 occurred on $$2" | json_logger "FATAL"
+            trap '' INT TERM
+            sleep infinity & pid=$$!
+
+            while wait $$pid; test $$? -ge 128
+            do echo 'exiting' | json_logger "INFO"
+            done
+            exit 1
+          }
+
+
+
+          if ! command -v nvme &> /dev/null
+          then
+              echo "nvme could not be found" | json_logger "FATAL"
+              exit
+          fi
+          if ! command -v grep &> /dev/null
+          then
+              echo "grep could not be found" | json_logger "FATAL"
+              exit
+          fi
+          if ! command -v cut &> /dev/null
+          then
+              echo "cut could not be found" | json_logger "FATAL"
+              exit
+          fi
+          if ! command -v vgscan &> /dev/null
+          then
+              echo "vgscan could not be found" | json_logger "FATAL"
+              exit
+          fi
+          if ! command -v vgcreate &> /dev/null
+          then
+              echo "vgcreate could not be found" | json_logger "FATAL"
+              exit
+          fi
+          if ! command -v pvcreate &> /dev/null
+          then
+              echo "pvcreate could not be found" | json_logger "FATAL"
+              exit
+          fi
+          PLATFORM="$${1:-gcp}"
+          echo Platform is $$PLATFORM | json_logger "INFO"
+          nvme list --output-format=json | tr '^ *' ' ' |  tr '\n' ' ' | json_logger "INFO"
+          OUTPUT=$$(vgdisplay || true 2> /dev/null | grep $${VG_NAME:-instancestore})
+          if [ $$PLATFORM == aws ]; then
+            condition="Instance"
+          elif [ $$PLATFORM == azure ]; then
+            condition="Microsoft NVMe Direct Disk"
+          elif [ $$PLATFORM == gcp ]; then
+            condition="nvme_card"
+          else
+            echo PLATFORM IS UNKNOWN | json_logger "FATAL"
+            exit 1 #We should not be here
+          fi
+
+          if [ -z "$$OUTPUT" ]
+          then
+              echo "VG does not exist this is normal if this is a new node" | json_logger "INFO"
+              declare -r disks=($$(nvme list | grep "$$condition" | cut -f 1 -d ' '))
+              if (( $${#disks[@]} )); then
+                  for i in "$${disks[@]}"
+                  do
+                      echo "Creating PV $$i" | json_logger "INFO"
+                      pvcreate -ff -y $$i
+                  done
+
+
+                  echo "Creating VG=$${VG_NAME:-instancestore} $$(printf '%s ' $${disks[@]})" | json_logger "INFO"
+                  vgcreate $${VG_NAME:-instancestore} $$(printf '%s ' $${disks[@]}) | json_logger "INFO"
+              fi
+          else
+              echo "VG exists that is unexpected if this is a new node" | json_logger "INFO"
+          fi
+
+
+
+          trap '' INT TERM
+          # sleep infinity & pid=$$!
+
+          while wait $$pid; test $$? -ge 128
+          do echo 'exiting' | json_logger "INFO"
+          done
+
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: PLATFORM
+          value: gcp
+        - name: VG_NAME
+          value: default
+        - name: MY_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+
+  tolerations:
+    - operator: Exists
+controller:
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - topolvm
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - controller
+          topologyKey: kubernetes.io/hostname
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/os
+                operator: In
+                values:
+                  - linux
+  topologySpreadConstraints:
+    - maxSkew: 2
+      minDomains: 2
+      whenUnsatisfiable: DoNotSchedule
+      topologyKey: topology.kubernetes.io/zone
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: topolvm
+          app.kubernetes.io/component: controller
+      matchLabelKeys:
+        - pod-template-hash
+  priorityClassName: "system-cluster-critical"
+storageClasses:
+  - name: ext4-raid0
+    storageClass:
+      # Supported filesystems are: ext4, xfs, and btrfs.
+      fsType: ext4
+      # reclaimPolicy
+      reclaimPolicy: Delete
+      # Additional annotations
+      annotations: {}
+      # Default storage class for dynamic volume provisioning
+      # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+      isDefaultClass: false
+      # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+      volumeBindingMode: WaitForFirstConsumer
+      # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+      allowVolumeExpansion: true
+      additionalParameters:
+        "topolvm.io/device-class": "default"
+      # mount options
+      mountOptions: []
+
+  # Other possible options, ext4-raid0 is recommended for most use cases
+  # - name: instancestore-nvme-btrfs
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: btrfs
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "default"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-ext4
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: ext4
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "default"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-xfs
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: xfs
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "default"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-btrfs-r0
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: btrfs
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "raid0"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-ext4-r0
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: ext4
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "raid0"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-xfs-r0
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: xfs
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "raid0"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-btrfs-r10
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: btrfs
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "raid10"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-ext4-r10
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: ext4
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "raid10"
+  #     # mount options
+  #     mountOptions: []
+  # - name: instancestore-nvme-xfs-r10
+  #   storageClass:
+  #     # Supported filesystems are: ext4, xfs, and btrfs.
+  #     fsType: xfs
+  #     # reclaimPolicy
+  #     reclaimPolicy: Delete
+  #     # Additional annotations
+  #     annotations: {}
+  #     # Default storage class for dynamic volume provisioning
+  #     # ref: https://kubernetes.io/docs/concepts/storage/dynamic-provisioning
+  #     isDefaultClass: false
+  #     # volumeBindingMode can be either WaitForFirstConsumer or Immediate. WaitForFirstConsumer is recommended because TopoLVM cannot schedule pods wisely if volumeBindingMode is Immediate.
+  #     volumeBindingMode: WaitForFirstConsumer
+  #     # enables CSI drivers to expand volumes. This feature is available for Kubernetes 1.16 and later releases.
+  #     allowVolumeExpansion: true
+  #     additionalParameters:
+  #       "topolvm.io/device-class": "raid10"
+  #     # mount options
+  #     mountOptions: []

@@ -227,7 +227,7 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
             "storage" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_data_disk_size"]
           }
         }
-        "storageClassName" = "topolvm-provisioner"
+        "storageClassName" = "ext4-raid0"
       }
       "digestPartitionsCount" = 840
       "environmentVariables" = [
@@ -359,8 +359,7 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
     null_resource.wait_for_humio_operator_crds,
     kubernetes_manifest.logscale_kafka_cluster,
     helm_release.cert-manager,
-    helm_release.topo_lvm_init,
-    helm_release.topo_lvm_sc,
+    helm_release.topo_lvm,
   ]
   computed_fields = ["metadata.labels"]
 
@@ -452,7 +451,7 @@ resource "kubernetes_manifest" "humio_cluster_type_ingress" {
             "storage" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_data_disk_size"]
           }
         }
-        "storageClassName" = "topolvm-provisioner"
+        "storageClassName" = "ext4-raid0"
       }
       "digestPartitionsCount" = 840
       "environmentVariables" = [
@@ -776,8 +775,7 @@ resource "kubernetes_manifest" "humio_cluster_type_ingress" {
     null_resource.wait_for_humio_operator_crds,
     kubernetes_manifest.logscale_kafka_cluster,
     helm_release.cert-manager,
-    helm_release.topo_lvm_init,
-    helm_release.topo_lvm_sc,
+    helm_release.topo_lvm,
   ]
   field_manager {
     name            = "tfapply"
@@ -874,7 +872,7 @@ resource "kubernetes_manifest" "humio_cluster_type_internal_ingest" {
             "storage" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_data_disk_size"]
           }
         }
-        "storageClassName" = "topolvm-provisioner"
+        "storageClassName" = "ext4-raid0"
       }
       "digestPartitionsCount" = 840
       "environmentVariables" = [
@@ -1383,8 +1381,7 @@ resource "kubernetes_manifest" "humio_cluster_type_internal_ingest" {
     null_resource.wait_for_humio_operator_crds,
     kubernetes_manifest.logscale_kafka_cluster,
     helm_release.cert-manager,
-    helm_release.topo_lvm_init,
-    helm_release.topo_lvm_sc,
+    helm_release.topo_lvm,
   ]
 
   field_manager {
