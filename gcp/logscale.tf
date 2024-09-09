@@ -159,7 +159,7 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
       "namespace" = "${kubernetes_namespace.logscale.id}"
     }
     "spec" = {
-      "nodeCount" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_node_count"]
+      "nodeCount" = 3
       "affinity" = {
         "nodeAffinity" = {
           "requiredDuringSchedulingIgnoredDuringExecution" = {
@@ -167,31 +167,10 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
               {
                 "matchExpressions" = [
                   {
-                    "key"      = "kubernetes.io/arch"
-                    "operator" = "In"
-                    "values" = [
-                      "amd64",
-                    ]
-                  },
-                  {
-                    "key"      = "kubernetes.io/os"
-                    "operator" = "In"
-                    "values" = [
-                      "linux",
-                    ]
-                  },
-                  {
                     "key"      = "k8s-app"
                     "operator" = "In"
                     "values" = [
                       "logscale-${local.logscale_cluster_identifier}",
-                    ]
-                  },
-                  {
-                    "key"      = "storageclass"
-                    "operator" = "In"
-                    "values" = [
-                      "nvme",
                     ]
                   },
                 ]
@@ -224,7 +203,7 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
         ]
         "resources" = {
           "requests" = {
-            "storage" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_data_disk_size"]
+            "storage" = "300Gi"
           }
         }
         "storageClassName" = "topolvm-provisioner"
@@ -300,7 +279,7 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
       ]
       "hostname" = "${var.public_url}"
       "humioServiceAccountAnnotations" = {
-        "iam.gke.io/gcp-service-account" = "${local.logscale_cluster_name}-wl-identity@${var.project_id}.iam.gserviceaccount.com"
+        "iam.gke.io/gcp-service-account" = "logscale-wccq-wl-identity@formidable-pact-398819.iam.gserviceaccount.com"
       }
       "image" = "humio/humio-core:1.131.1"
       "license" = {
@@ -311,12 +290,12 @@ resource "kubernetes_manifest" "humio_cluster_type_basic" {
       }
       "resources" = {
         "limits" = {
-          "cpu"    = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_resources"]["limits"]["cpu"],
-          "memory" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_resources"]["limits"]["memory"]
+          "cpu"    = 7,
+          "memory" = "30Gi"
         }
         "requests" = {
-          "cpu"    = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_resources"]["requests"]["cpu"],
-          "memory" = local.logscale_cluster_definitions[local.logscale_cluster_size]["logscale_digest_resources"]["requests"]["memory"]
+          "cpu"    = 7,
+          "memory" = "30Gi"
         }
       }
       "sidecarContainer" = [

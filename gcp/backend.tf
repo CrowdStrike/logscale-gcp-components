@@ -1,7 +1,7 @@
 # Backend configuration
 terraform {
   backend "gcs" {
-    bucket = "logscale-terraform-state-v1"
+    bucket = "test-new-logscale-terraform-state-v1"
     prefix = "logscale/gcp-components/terraform/tf.state"
   }
 }
@@ -10,7 +10,7 @@ terraform {
 data "terraform_remote_state" "logscale_gcp" {
   backend = "gcs"
   config = {
-    bucket = var.logscale_gcp_tf_state_bucket
+    bucket = "test-new-logscale-terraform-state-v1"
     prefix = "logscale/gcp/terraform/tf.state"
   }
 }

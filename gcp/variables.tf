@@ -11,13 +11,13 @@ variable "project_id" {
 # Public URL of the cluster
 variable "public_url" {
   type    = string
-  default = ""
+  default = "gcptest.humio.net"
 }
 
 # Remote state where the LogScale GCP Terraform state is stored
 variable "logscale_gcp_tf_state_bucket" {
   type    = string
-  default = "logscale-terraform-state-v1"
+  default = "xxxxx-logscale-terraform-state-v1"
 }
 
 
@@ -156,12 +156,12 @@ variable "logscale_cluster_size" {
 
 # Local variables from the remote Terraform state
 locals {
-  gke_context                  = "gke_${var.project_id}_${local.logscale_cluster_region}_${local.logscale_cluster_name}-gke"
-  logscale_bucket_storage      = data.terraform_remote_state.logscale_gcp.outputs.logscale_bucket_storage
+  gke_context                  = "gke_${var.project_id}_${local.logscale_cluster_region}_${local.logscale_cluster_name}"
+  logscale_bucket_storage      = "logscale-test-bucket-storage"
   logscale_cluster_name        = data.terraform_remote_state.logscale_gcp.outputs.logscale_cluster_name
   logscale_cluster_size        = data.terraform_remote_state.logscale_gcp.outputs.logscale_cluster_size
   logscale_cluster_type        = data.terraform_remote_state.logscale_gcp.outputs.logscale_cluster_type
-  logscale_cluster_identifier  = data.terraform_remote_state.logscale_gcp.outputs.logscale_cluster_identifier
+  logscale_cluster_identifier  = "wccq"
   logscale_cluster_definitions = data.terraform_remote_state.logscale_gcp.outputs.logscale_cluster_definitions
   logscale_gce_ingress_ip      = data.terraform_remote_state.logscale_gcp.outputs.logscale_gce_ingress_ip
   logscale_cluster_region      = data.terraform_remote_state.logscale_gcp.outputs.logscale_cluster_region
